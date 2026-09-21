@@ -16,8 +16,6 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
-extern volatile sig_atomic_t g_scan_interrupted;
-
 static int cmp_int(const void *a, const void *b) {
     return (*(const int *)a) - (*(const int *)b);
 }
@@ -212,7 +210,7 @@ static void *worker_thread(void *arg) {
     scan_config_t *cfg = wq->cfg;
 
     for (;;) {
-        if (g_scan_interrupted) break;
+        if (cfg->cancel_flag && *cfg->cancel_flag) break;
 
         pthread_mutex_lock(&wq->lock);
         size_t idx = wq->next_index;
@@ -229,6 +227,8 @@ static void *worker_thread(void *arg) {
         result->status = scan_single_port(cfg, port, cfg->grab_banner,
                                            result->banner,
                                            sizeof(result->banner));
+
+        if (cfg->on_result) cfg->on_result(result, cfg->on_result_ctx);
     }
     return NULL;
 }

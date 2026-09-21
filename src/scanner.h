@@ -1,6 +1,7 @@
 #ifndef SCANNER_H
 #define SCANNER_H
 
+#include <signal.h>
 #include <stddef.h>
 #include <netdb.h>
 
@@ -17,6 +18,12 @@ typedef struct {
     char banner[256];
 } port_result_t;
 
+/* Called from a worker thread right after a port finishes scanning, if set.
+ * Implementations must not block and must not touch cfg/results directly
+ * from other threads (e.g. a GUI must marshal the update back to its main
+ * thread instead of touching widgets here). */
+typedef void (*port_result_cb)(const port_result_t *result, void *ctx);
+
 typedef struct {
     const char *host;
     struct sockaddr_storage addr;
@@ -29,6 +36,13 @@ typedef struct {
     int timeout_ms;
     int thread_count;
     int grab_banner;
+
+    /* Optional: checked between ports; set *cancel_flag to stop early. */
+    volatile sig_atomic_t *cancel_flag;
+
+    /* Optional: invoked after each port is scanned. */
+    port_result_cb on_result;
+    void *on_result_ctx;
 
     port_result_t *results;
 } scan_config_t;

@@ -7,7 +7,7 @@
 
 #include "scanner.h"
 
-volatile sig_atomic_t g_scan_interrupted = 0;
+static volatile sig_atomic_t g_scan_interrupted = 0;
 
 static void handle_sigint(int sig) {
     (void)sig;
@@ -98,6 +98,7 @@ int main(int argc, char **argv) {
     cfg.timeout_ms = timeout_ms;
     cfg.thread_count = threads;
     cfg.grab_banner = grab_banner;
+    cfg.cancel_flag = &g_scan_interrupted;
 
     if (scanner_resolve_host(&cfg) != 0) {
         free(ports);

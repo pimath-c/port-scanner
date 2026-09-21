@@ -2,8 +2,12 @@
 
 Scanner de portas TCP simples, escrito em C, usando `connect()` não bloqueante
 e um pool de threads (pthreads) para escanear várias portas em paralelo.
+Inclui uma CLI e uma interface gráfica (GTK 3), ambas construídas sobre o
+mesmo núcleo de escaneamento (`src/scanner.c`).
 
 ## Build
+
+CLI:
 
 ```sh
 make
@@ -12,7 +16,27 @@ make
 Requer um compilador C (gcc/clang) e a biblioteca pthreads (padrão em
 sistemas Linux/BSD/macOS).
 
-## Uso
+Interface gráfica (opcional, requer GTK 3):
+
+```sh
+# Ubuntu/Debian
+sudo apt-get install libgtk-3-dev
+
+make gui
+```
+
+## Interface gráfica
+
+```sh
+./port-scanner-gui
+```
+
+A janela permite configurar host, portas, threads, timeout, captura de
+banner e exibição de todas as portas (não só as abertas), com resultados
+atualizados em tempo real (coloridos por status) e um botão **Parar** para
+cancelar um scan em andamento.
+
+## Uso (CLI)
 
 ```sh
 ./port-scanner <host> [opcoes]
