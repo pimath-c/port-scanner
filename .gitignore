@@ -1,0 +1,4 @@
+build/
+port-scanner
+*.o
+*.out
