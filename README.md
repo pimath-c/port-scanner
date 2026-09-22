@@ -36,6 +36,9 @@ make gui
 Se você está no Windows, use `port-scanner-gui.exe` — é a forma mais simples
 de rodar o scanner: baixe o `.exe`, dê dois cliques, sem instalação.
 
+Binários já compilados estão em [`dist/`](dist/) (`port-scanner.exe` e
+`port-scanner-gui.exe`) — não precisa compilar nada, só baixar o arquivo.
+
 Os `.exe` (CLI e GUI) são cross-compilados aqui no Linux com `mingw-w64` e
 depois **rodam nativamente no Windows** — não precisam de WSL, Python, GTK,
 nem de nenhum runtime extra instalado na máquina.
