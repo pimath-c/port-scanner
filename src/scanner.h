@@ -8,8 +8,17 @@
 typedef enum {
     PORT_OPEN,
     PORT_CLOSED,
-    PORT_FILTERED
+    PORT_FILTERED,
+    /* UDP only: no response and no ICMP unreachable came back, so we
+     * genuinely cannot tell open from filtered (same convention nmap uses
+     * for UDP scans). */
+    PORT_OPEN_FILTERED
 } port_status_t;
+
+typedef enum {
+    SCAN_PROTO_TCP = 0,
+    SCAN_PROTO_UDP
+} scan_protocol_t;
 
 typedef struct {
     int port;
@@ -32,6 +41,9 @@ typedef struct {
 
     int *ports;
     size_t port_count;
+
+    /* Defaults to SCAN_PROTO_TCP (0) when the struct is zero-initialized. */
+    scan_protocol_t protocol;
 
     int timeout_ms;
     int thread_count;

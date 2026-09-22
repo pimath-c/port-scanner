@@ -86,6 +86,7 @@ port-scanner.exe <host> [opcoes]     # Windows
 | `-T, --timeout`     | Timeout de conexão em milissegundos                          | `500`    |
 | `-b, --banner`      | Tenta capturar o banner do serviço em portas abertas         | desligado |
 | `-a, --all`         | Mostra todas as portas (aberta/fechada/filtrada), não só as abertas | desligado |
+| `-u, --udp`         | Escaneamento UDP em vez de TCP                               | desligado (TCP) |
 | `-h, --help`        | Mostra a ajuda                                               |          |
 
 ### Exemplos
@@ -109,6 +110,13 @@ fechadas/filtradas):
 ./port-scanner example.com -p 21,22,25,80,443,3306 -a
 ```
 
+Escanear portas UDP (DNS e NTP têm probes dedicados; as demais usam um
+datagrama vazio):
+
+```sh
+./port-scanner 8.8.8.8 -p 53,123 -u -a -b
+```
+
 ## Como funciona
 
 - O host é resolvido uma única vez via `getaddrinfo`.
@@ -121,11 +129,20 @@ fechadas/filtradas):
   dados enviados pelo serviço (banner) logo após a conexão.
 - `Ctrl+C` interrompe o scan de forma limpa, imprimindo os resultados
   obtidos até o momento.
+- Com `-u`, cada porta usa um socket UDP `connect()`ado: uma resposta marca
+  a porta como `open`, um ICMP "port unreachable" (que o kernel entrega como
+  `ECONNREFUSED`) marca como `closed`, e silêncio dentro do timeout é
+  reportado como `open|filtered` — a mesma ambiguidade inerente a qualquer
+  scanner UDP, já que não há handshake para confirmar o estado. Para
+  aumentar a taxa de resposta, portas 53 (DNS) e 123 (NTP) usam probes
+  específicos do protocolo; as demais recebem um datagrama vazio.
 
 ## Limitações conhecidas
 
-- Faz apenas TCP connect scan (não há SYN scan / UDP scan), então não
-  requer privilégios de root.
-- A captura de banner é passiva: não envia payloads específicos por
+- Faz apenas TCP connect scan / UDP scan orientado a resposta (não há SYN
+  scan), então não requer privilégios de root.
+- A captura de banner TCP é passiva: não envia payloads específicos por
   protocolo, então serviços que esperam o cliente falar primeiro (por
-  exemplo, HTTP) não retornarão banner sem uma requisição.
+  exemplo, HTTP) não retornarão banner sem uma requisição. Para UDP, apenas
+  DNS e NTP têm probes dedicados; outras portas dependem do serviço
+  responder a um datagrama vazio.

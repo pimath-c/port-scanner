@@ -25,11 +25,13 @@ static void print_usage(const char *prog) {
         "  -T, --timeout <ms>     Timeout de conexao em milissegundos. Padrao: 500\n"
         "  -b, --banner           Tenta capturar o banner dos servicos abertos\n"
         "  -a, --all              Mostra todas as portas, nao so as abertas\n"
+        "  -u, --udp              Escaneamento UDP (padrao: TCP)\n"
         "  -h, --help             Mostra esta ajuda\n"
         "\n"
         "Exemplo:\n"
-        "  %s scanme.nmap.org -p 1-1000 -t 200 -b\n",
-        prog, prog);
+        "  %s scanme.nmap.org -p 1-1000 -t 200 -b\n"
+        "  %s 8.8.8.8 -p 53,123 -u\n",
+        prog, prog, prog);
 }
 
 static double elapsed_seconds(struct timespec start, struct timespec end) {
@@ -43,6 +45,7 @@ int main(int argc, char **argv) {
     int timeout_ms = 500;
     int grab_banner = 0;
     int show_all = 0;
+    scan_protocol_t protocol = SCAN_PROTO_TCP;
 
     static struct option long_opts[] = {
         {"ports", required_argument, 0, 'p'},
@@ -50,18 +53,20 @@ int main(int argc, char **argv) {
         {"timeout", required_argument, 0, 'T'},
         {"banner", no_argument, 0, 'b'},
         {"all", no_argument, 0, 'a'},
+        {"udp", no_argument, 0, 'u'},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "p:t:T:bah", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "p:t:T:bauh", long_opts, NULL)) != -1) {
         switch (opt) {
             case 'p': ports_spec = optarg; break;
             case 't': threads = atoi(optarg); break;
             case 'T': timeout_ms = atoi(optarg); break;
             case 'b': grab_banner = 1; break;
             case 'a': show_all = 1; break;
+            case 'u': protocol = SCAN_PROTO_UDP; break;
             case 'h': print_usage(argv[0]); return 0;
             default: print_usage(argv[0]); return 1;
         }
@@ -95,6 +100,7 @@ int main(int argc, char **argv) {
     cfg.host = host;
     cfg.ports = ports;
     cfg.port_count = port_count;
+    cfg.protocol = protocol;
     cfg.timeout_ms = timeout_ms;
     cfg.thread_count = threads;
     cfg.grab_banner = grab_banner;
@@ -114,8 +120,9 @@ int main(int argc, char **argv) {
 
     signal(SIGINT, handle_sigint);
 
-    printf("Escaneando %s (%zu porta%s, %d threads, timeout %dms)...\n",
-           host, port_count, port_count == 1 ? "" : "s", threads, timeout_ms);
+    printf("Escaneando %s [%s] (%zu porta%s, %d threads, timeout %dms)...\n",
+           host, protocol == SCAN_PROTO_UDP ? "UDP" : "TCP", port_count,
+           port_count == 1 ? "" : "s", threads, timeout_ms);
 
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
