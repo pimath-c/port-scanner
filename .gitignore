@@ -1,4 +1,7 @@
 build/
 port-scanner
+port-scanner-gui
+*.exe
+!dist/*.exe
 *.o
 *.out

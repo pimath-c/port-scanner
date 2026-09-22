@@ -16,8 +16,6 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
-extern volatile sig_atomic_t g_scan_interrupted;
-
 static int cmp_int(const void *a, const void *b) {
     return (*(const int *)a) - (*(const int *)b);
 }
@@ -99,7 +97,7 @@ int scanner_resolve_host(scan_config_t *cfg) {
     struct addrinfo hints, *res = NULL;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_socktype = (cfg->protocol == SCAN_PROTO_UDP) ? SOCK_DGRAM : SOCK_STREAM;
 
     int rc = getaddrinfo(cfg->host, NULL, &hints, &res);
     if (rc != 0 || !res) {
@@ -126,18 +124,47 @@ static void set_port_in_addr(struct sockaddr_storage *addr, int family, int port
     }
 }
 
-static void grab_banner(int fd, char *out, size_t out_len) {
-    struct pollfd pfd = { .fd = fd, .events = POLLIN };
-    int rc = poll(&pfd, 1, 1000);
-    if (rc <= 0) {
-        out[0] = '\0';
-        return;
+/* Service-specific UDP probes. Most UDP services stay silent on an empty
+ * datagram, so a handful of well-known probes make results meaningfully
+ * more accurate than sending nothing. */
+typedef struct {
+    int port;
+    const unsigned char *payload;
+    size_t len;
+} udp_probe_t;
+
+static const unsigned char DNS_PROBE[] = {
+    0xaa, 0xaa,             /* ID */
+    0x01, 0x00,             /* flags: standard query, recursion desired */
+    0x00, 0x01,             /* QDCOUNT = 1 */
+    0x00, 0x00,             /* ANCOUNT */
+    0x00, 0x00,             /* NSCOUNT */
+    0x00, 0x00,             /* ARCOUNT */
+    0x00,                   /* QNAME: root */
+    0x00, 0x01,             /* QTYPE = A */
+    0x00, 0x01              /* QCLASS = IN */
+};
+
+static const unsigned char NTP_PROBE[48] = { 0x1b };
+
+static const udp_probe_t UDP_PROBES[] = {
+    { 53, DNS_PROBE, sizeof(DNS_PROBE) },
+    { 123, NTP_PROBE, sizeof(NTP_PROBE) },
+};
+
+static void get_udp_probe(int port, const unsigned char **payload, size_t *len) {
+    for (size_t i = 0; i < sizeof(UDP_PROBES) / sizeof(UDP_PROBES[0]); i++) {
+        if (UDP_PROBES[i].port == port) {
+            *payload = UDP_PROBES[i].payload;
+            *len = UDP_PROBES[i].len;
+            return;
+        }
     }
-    ssize_t n = recv(fd, out, out_len - 1, 0);
-    if (n <= 0) {
-        out[0] = '\0';
-        return;
-    }
+    *payload = NULL;
+    *len = 0;
+}
+
+static void sanitize_banner(char *out, ssize_t n) {
     out[n] = '\0';
     for (ssize_t i = 0; i < n; i++) {
         unsigned char c = (unsigned char)out[i];
@@ -155,9 +182,54 @@ static void grab_banner(int fd, char *out, size_t out_len) {
     }
 }
 
-static port_status_t scan_single_port(const scan_config_t *cfg, int port,
-                                       int grab_banner_flag, char *banner_out,
-                                       size_t banner_len) {
+static const char HTTP_PROBE[] =
+    "GET / HTTP/1.0\r\nHost: probe\r\nConnection: close\r\n\r\n";
+static const char GENERIC_PROBE[] = "\r\n";
+
+static void get_tcp_probe(int port, const char **payload, size_t *len) {
+    switch (port) {
+        case 80: case 8080: case 8000: case 8888: case 8081: case 3000:
+            *payload = HTTP_PROBE;
+            *len = sizeof(HTTP_PROBE) - 1;
+            break;
+        default:
+            *payload = GENERIC_PROBE;
+            *len = sizeof(GENERIC_PROBE) - 1;
+    }
+}
+
+static void grab_banner(int fd, int port, int active, char *out, size_t out_len) {
+    struct pollfd pfd = { .fd = fd, .events = POLLIN };
+    int rc = poll(&pfd, 1, active ? 300 : 1000);
+    if (rc <= 0) {
+        if (!active) {
+            out[0] = '\0';
+            return;
+        }
+        const char *probe;
+        size_t probe_len;
+        get_tcp_probe(port, &probe, &probe_len);
+        if (send(fd, probe, probe_len, 0) < 0) {
+            out[0] = '\0';
+            return;
+        }
+        rc = poll(&pfd, 1, 700);
+        if (rc <= 0) {
+            out[0] = '\0';
+            return;
+        }
+    }
+    ssize_t n = recv(fd, out, out_len - 1, 0);
+    if (n <= 0) {
+        out[0] = '\0';
+        return;
+    }
+    sanitize_banner(out, n);
+}
+
+static port_status_t scan_single_port_tcp(const scan_config_t *cfg, int port,
+                                           int grab_banner_flag, char *banner_out,
+                                           size_t banner_len) {
     int fd = socket(cfg->family, SOCK_STREAM, 0);
     if (fd < 0) return PORT_FILTERED;
 
@@ -192,13 +264,82 @@ static port_status_t scan_single_port(const scan_config_t *cfg, int port,
         /* switch back to blocking-ish behaviour bounded by poll() timeout */
         int bflags = fcntl(fd, F_GETFL, 0);
         fcntl(fd, F_SETFL, bflags & ~O_NONBLOCK);
-        grab_banner(fd, banner_out, banner_len);
+        grab_banner(fd, port, cfg->active_banner, banner_out, banner_len);
     } else if (banner_out) {
         banner_out[0] = '\0';
     }
 
     close(fd);
     return status;
+}
+
+/* UDP has no handshake, so "open" can only be confirmed by getting a reply.
+ * A connected UDP socket surfaces the target's ICMP port-unreachable as
+ * ECONNREFUSED on send/recv, which is how we detect PORT_CLOSED; silence
+ * within the timeout is the inherent open-vs-filtered ambiguity of UDP
+ * scanning. */
+static port_status_t scan_single_port_udp(const scan_config_t *cfg, int port,
+                                           int grab_banner_flag, char *banner_out,
+                                           size_t banner_len) {
+    if (banner_out) banner_out[0] = '\0';
+
+    int fd = socket(cfg->family, SOCK_DGRAM, 0);
+    if (fd < 0) return PORT_FILTERED;
+
+    struct sockaddr_storage addr = cfg->addr;
+    set_port_in_addr(&addr, cfg->family, port);
+
+    if (connect(fd, (struct sockaddr *)&addr, cfg->addr_len) != 0) {
+        close(fd);
+        return PORT_FILTERED;
+    }
+
+    const unsigned char *payload = NULL;
+    size_t payload_len = 0;
+    get_udp_probe(port, &payload, &payload_len);
+    unsigned char empty_probe = 0;
+    if (!payload) {
+        payload = &empty_probe;
+        payload_len = 0;
+    }
+
+    port_status_t status;
+    ssize_t sn = send(fd, payload, payload_len, 0);
+    if (sn < 0 && errno == ECONNREFUSED) {
+        close(fd);
+        return PORT_CLOSED;
+    }
+
+    struct pollfd pfd = { .fd = fd, .events = POLLIN };
+    int pr = poll(&pfd, 1, cfg->timeout_ms);
+    if (pr <= 0) {
+        status = PORT_OPEN_FILTERED;
+    } else {
+        char buf[256];
+        ssize_t n = recv(fd, buf, sizeof(buf) - 1, 0);
+        if (n < 0) {
+            status = (errno == ECONNREFUSED) ? PORT_CLOSED : PORT_OPEN_FILTERED;
+        } else {
+            status = PORT_OPEN;
+            if (grab_banner_flag && banner_out && n > 0) {
+                size_t copy_len = (size_t)n < banner_len - 1 ? (size_t)n : banner_len - 1;
+                memcpy(banner_out, buf, copy_len);
+                sanitize_banner(banner_out, (ssize_t)copy_len);
+            }
+        }
+    }
+
+    close(fd);
+    return status;
+}
+
+static port_status_t scan_single_port(const scan_config_t *cfg, int port,
+                                       int grab_banner_flag, char *banner_out,
+                                       size_t banner_len) {
+    if (cfg->protocol == SCAN_PROTO_UDP) {
+        return scan_single_port_udp(cfg, port, grab_banner_flag, banner_out, banner_len);
+    }
+    return scan_single_port_tcp(cfg, port, grab_banner_flag, banner_out, banner_len);
 }
 
 typedef struct {
@@ -212,7 +353,7 @@ static void *worker_thread(void *arg) {
     scan_config_t *cfg = wq->cfg;
 
     for (;;) {
-        if (g_scan_interrupted) break;
+        if (cfg->cancel_flag && *cfg->cancel_flag) break;
 
         pthread_mutex_lock(&wq->lock);
         size_t idx = wq->next_index;
@@ -229,13 +370,16 @@ static void *worker_thread(void *arg) {
         result->status = scan_single_port(cfg, port, cfg->grab_banner,
                                            result->banner,
                                            sizeof(result->banner));
+
+        if (cfg->on_result) cfg->on_result(result, cfg->on_result_ctx);
     }
     return NULL;
 }
 
 void run_scan(scan_config_t *cfg) {
+    const char *proto_name = (cfg->protocol == SCAN_PROTO_UDP) ? "udp" : "tcp";
     for (size_t i = 0; i < cfg->port_count; i++) {
-        struct servent *se = getservbyport(htons((uint16_t)cfg->ports[i]), "tcp");
+        struct servent *se = getservbyport(htons((uint16_t)cfg->ports[i]), proto_name);
         if (se && se->s_name) {
             snprintf(cfg->results[i].service, sizeof(cfg->results[i].service),
                      "%s", se->s_name);
@@ -273,6 +417,7 @@ const char *status_to_str(port_status_t status) {
         case PORT_OPEN: return "open";
         case PORT_CLOSED: return "closed";
         case PORT_FILTERED: return "filtered";
+        case PORT_OPEN_FILTERED: return "open|filtered";
         default: return "?";
     }
 }
