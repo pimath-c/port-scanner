@@ -49,6 +49,11 @@ typedef struct {
     int thread_count;
     int grab_banner;
 
+    /* TCP only: if the service stays silent after connect, send a small
+     * protocol-appropriate probe (e.g. an HTTP GET on web ports) instead
+     * of just waiting passively. Ignored unless grab_banner is also set. */
+    int active_banner;
+
     /* Optional: checked between ports; set *cancel_flag to stop early. */
     volatile sig_atomic_t *cancel_flag;
 

@@ -182,12 +182,42 @@ static void sanitize_banner(char *out, ssize_t n) {
     }
 }
 
-static void grab_banner(int fd, char *out, size_t out_len) {
+static const char HTTP_PROBE[] =
+    "GET / HTTP/1.0\r\nHost: probe\r\nConnection: close\r\n\r\n";
+static const char GENERIC_PROBE[] = "\r\n";
+
+static void get_tcp_probe(int port, const char **payload, size_t *len) {
+    switch (port) {
+        case 80: case 8080: case 8000: case 8888: case 8081: case 3000:
+            *payload = HTTP_PROBE;
+            *len = sizeof(HTTP_PROBE) - 1;
+            break;
+        default:
+            *payload = GENERIC_PROBE;
+            *len = sizeof(GENERIC_PROBE) - 1;
+    }
+}
+
+static void grab_banner(int fd, int port, int active, char *out, size_t out_len) {
     struct pollfd pfd = { .fd = fd, .events = POLLIN };
-    int rc = poll(&pfd, 1, 1000);
+    int rc = poll(&pfd, 1, active ? 300 : 1000);
     if (rc <= 0) {
-        out[0] = '\0';
-        return;
+        if (!active) {
+            out[0] = '\0';
+            return;
+        }
+        const char *probe;
+        size_t probe_len;
+        get_tcp_probe(port, &probe, &probe_len);
+        if (send(fd, probe, probe_len, 0) < 0) {
+            out[0] = '\0';
+            return;
+        }
+        rc = poll(&pfd, 1, 700);
+        if (rc <= 0) {
+            out[0] = '\0';
+            return;
+        }
     }
     ssize_t n = recv(fd, out, out_len - 1, 0);
     if (n <= 0) {
@@ -234,7 +264,7 @@ static port_status_t scan_single_port_tcp(const scan_config_t *cfg, int port,
         /* switch back to blocking-ish behaviour bounded by poll() timeout */
         int bflags = fcntl(fd, F_GETFL, 0);
         fcntl(fd, F_SETFL, bflags & ~O_NONBLOCK);
-        grab_banner(fd, banner_out, banner_len);
+        grab_banner(fd, port, cfg->active_banner, banner_out, banner_len);
     } else if (banner_out) {
         banner_out[0] = '\0';
     }
