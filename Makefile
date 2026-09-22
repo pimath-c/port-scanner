@@ -9,7 +9,11 @@ GUI_TARGET := port-scanner-gui
 GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
 GTK_LIBS := $(shell pkg-config --libs gtk+-3.0 2>/dev/null)
 
-.PHONY: all gui clean
+MINGW_CC := x86_64-w64-mingw32-gcc
+WIN_TARGET := port-scanner.exe
+WIN_GUI_TARGET := port-scanner-gui.exe
+
+.PHONY: all gui clean windows windows-cli windows-gui
 
 all: $(TARGET)
 
@@ -40,5 +44,20 @@ $(BUILD_DIR)/gui/gui_main.o: gui/gui_main.c src/scanner.h | $(BUILD_DIR)
 $(BUILD_DIR)/gui/scanner.o: src/scanner.c src/scanner.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# --- Windows (cross-compiled with mingw-w64; produces standalone .exe
+# files that only depend on standard Windows system DLLs) ---
+
+windows: windows-cli windows-gui
+
+windows-cli: $(WIN_TARGET)
+
+$(WIN_TARGET): windows/main_win.c windows/scanner_win.c windows/scanner_win.h
+	$(MINGW_CC) $(CFLAGS) windows/main_win.c windows/scanner_win.c -o $@ -lws2_32
+
+windows-gui: $(WIN_GUI_TARGET)
+
+$(WIN_GUI_TARGET): windows/gui_win_main.c windows/scanner_win.c windows/scanner_win.h
+	$(MINGW_CC) $(CFLAGS) -municode -mwindows windows/gui_win_main.c windows/scanner_win.c -o $@ -lws2_32 -lcomctl32
+
 clean:
-	rm -rf $(BUILD_DIR) $(TARGET) $(GUI_TARGET)
+	rm -rf $(BUILD_DIR) $(TARGET) $(GUI_TARGET) $(WIN_TARGET) $(WIN_GUI_TARGET)

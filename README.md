@@ -1,13 +1,19 @@
 # port-scanner
 
 Scanner de portas TCP simples, escrito em C, usando `connect()` não bloqueante
-e um pool de threads (pthreads) para escanear várias portas em paralelo.
-Inclui uma CLI e uma interface gráfica (GTK 3), ambas construídas sobre o
-mesmo núcleo de escaneamento (`src/scanner.c`).
+e um pool de threads para escanear várias portas em paralelo. Tem três alvos
+de build, todos sobre o mesmo núcleo de escaneamento:
+
+- **CLI** (Linux/macOS/BSD, `src/`) — linha de comando, POSIX sockets + pthreads.
+- **GUI GTK 3** (Linux, `gui/`) — interface gráfica para desktops Linux.
+- **Windows** (`windows/`) — CLI e GUI nativas para Windows (Winsock2 + Win32
+  API/threads puros), compiladas com `mingw-w64` a partir do Linux. Geram um
+  único `.exe` portátil, sem instalador nem DLLs externas — só depende de
+  DLLs padrão do Windows (`ws2_32`, `user32`, `comctl32` etc.).
 
 ## Build
 
-CLI:
+CLI (Linux/macOS/BSD):
 
 ```sh
 make
@@ -16,7 +22,7 @@ make
 Requer um compilador C (gcc/clang) e a biblioteca pthreads (padrão em
 sistemas Linux/BSD/macOS).
 
-Interface gráfica (opcional, requer GTK 3):
+GUI GTK 3 (opcional, Linux):
 
 ```sh
 # Ubuntu/Debian
@@ -25,10 +31,35 @@ sudo apt-get install libgtk-3-dev
 make gui
 ```
 
-## Interface gráfica
+## App para Windows
+
+Se você está no Windows, use `port-scanner-gui.exe` — é a forma mais simples
+de rodar o scanner: baixe o `.exe`, dê dois cliques, sem instalação.
+
+Os `.exe` (CLI e GUI) são cross-compilados aqui no Linux com `mingw-w64` e
+depois **rodam nativamente no Windows** — não precisam de WSL, Python, GTK,
+nem de nenhum runtime extra instalado na máquina.
+
+Para compilar você mesmo (a partir de Linux, com `mingw-w64` instalado):
 
 ```sh
-./port-scanner-gui
+# Ubuntu/Debian
+sudo apt-get install gcc-mingw-w64-x86-64
+
+make windows        # gera port-scanner.exe e port-scanner-gui.exe
+# ou individualmente:
+make windows-cli
+make windows-gui
+```
+
+Basta copiar o(s) `.exe` gerado(s) para uma máquina Windows e executar — não
+há instalador porque não é necessário: é um binário único e portátil.
+
+### Interface gráfica (Windows e Linux)
+
+```sh
+./port-scanner-gui        # Linux (GTK 3)
+port-scanner-gui.exe      # Windows
 ```
 
 A janela permite configurar host, portas, threads, timeout, captura de
@@ -39,7 +70,8 @@ cancelar um scan em andamento.
 ## Uso (CLI)
 
 ```sh
-./port-scanner <host> [opcoes]
+./port-scanner <host> [opcoes]       # Linux/macOS/BSD
+port-scanner.exe <host> [opcoes]     # Windows
 ```
 
 ### Opções

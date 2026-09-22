@@ -1,5 +1,6 @@
 build/
 port-scanner
 port-scanner-gui
+*.exe
 *.o
 *.out
